@@ -32,7 +32,7 @@ npm run dev         # run src/main.ts directly via tsx
 npm start           # run the built dist/main.js
 ```
 
-Config for local runs comes from `config.json` (copy from `config.example.json`) or the `GENERIC_ACP_BASE_URL` / `GENERIC_ACP_API_KEY` / `GENERIC_ACP_MODEL` env vars.
+Config for local runs comes from `config.json` (copy from `config.example.json`) or the `GENERIC_ACP_BASE_URL` / `GENERIC_ACP_API_KEY` / `GENERIC_ACP_MODEL` env vars. Several hosts in one process use the `endpoints` array in that file, or `GENERIC_ACP_ENDPOINTS`. JetBrains `acp.json` launches the same process and puts that JSON in the agent `env`.
 
 ## Conventions
 

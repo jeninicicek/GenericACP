@@ -5,3 +5,4 @@ coverage/
 .env
 *.ENV
 config.local.json
+/package-lock.json

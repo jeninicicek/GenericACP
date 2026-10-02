@@ -1,383 +1,149 @@
-# Generic ACP ↔ OpenAI-Compatible Bridge for JetBrains AI Assistant
+# Generic ACP Agent
 
-## Overview
+A thin [Agent Client Protocol](https://agentclientprotocol.com) agent that connects JetBrains AI Assistant to any OpenAI-compatible API: OpenAI, Azure OpenAI, OpenRouter, Ollama, LM Studio, vLLM, or another server that speaks the same HTTP API.
 
-This document describes a concept for a lightweight ACP (Agent Client Protocol) agent that acts as a bridge between JetBrains AI Assistant and any OpenAI-compatible API.
-
-The goal is to provide a vendor-neutral ACP agent that can be used with:
-
-- OpenAI
-- Azure OpenAI
-- OpenRouter
-- Ollama
-- LM Studio
-- vLLM
-- Custom OpenAI-compatible services
-
-without being tied to a specific provider such as Gemini, Claude, or Codex.
-
-Prefered is TypeScript implementation...
-
-## Problem Statement
-
-Current ACP agents are primarily focused on specific ecosystems or full agent frameworks:
-
-| Agent | Primary Focus |
-|---------|---------|
-| Gemini CLI | Gemini ecosystem |
-| Codex CLI | OpenAI ecosystem |
-| OpenCode | Full coding agent |
-| Cline | Full coding agent |
-
-While these solutions may support multiple model providers, they contain significantly more functionality than is required for a simple ACP-to-LLM bridge.
-
-What is currently missing is a simple adapter:
+One process, one configuration. Provider differences are `baseUrl`, `apiKey`, `model`, and optional headers. The implementation is the ACP session, tool calls, and the OpenAI HTTP API.
 
 ```text
-JetBrains
-    │
-    │ ACP
-    ▼
+JetBrains AI Assistant
+        │  ACP over stdio
+        ▼
 Generic ACP Agent
-    │
-    │ OpenAI-Compatible API
-    ▼
-Any LLM Provider
+        │  Chat Completions or Responses API
+        ▼
+OpenAI-compatible host
 ```
 
-This agent would act similarly to JDBC for databases: a thin abstraction layer between the IDE and the underlying provider.
+## What it does
 
-## Architecture
+- Streams assistant text and reasoning into the IDE.
+- Calls `read_file`, `write_file`, and `run_terminal` through the client's permission and filesystem APIs, and calls tools from MCP servers the client passes in (stdio, HTTP, SSE, and ACP).
+- Keeps session history. With `sessionDir`, sessions survive a process restart (`session/list`, `session/resume`, `session/load`, `session/fork`, `session/delete`).
+- Lists models from `GET /v1/models` and lets the IDE switch model, tool choice, reasoning effort, image detail, and parallel tool calls.
+- Accepts several hosts in one process. The model id is then `endpointId:modelId`.
+- Sends Chat Completions by default. `apiMode: "responses"` uses `/v1/responses` and falls back to Chat Completions when that route is missing.
+- Sends optional `responseSchema` as structured output and drops it if the host rejects it.
+- Maps image blocks to `image_url`. Audio blocks are sent only when `audioSupport` is on.
+- Shrinks a prompt that does not fit the context window read from the model record (`loaded_context_length`, otherwise the advertised max). `GENERIC_ACP_CONTEXT_TOKENS` overrides that number.
+- Waits 30 minutes for a silent local model (`requestTimeoutMs` or `GENERIC_ACP_REQUEST_TIMEOUT_MS`). Node's fetch otherwise closes the socket after five minutes.
+- Reports provider failures as an `[Error: …]` message and `end_turn`. ACP has no error stop reason.
 
-```text
-┌──────────────────────┐
-│ IntelliJ IDEA / JB AI│
-└──────────┬───────────┘
-           │ ACP
-           ▼
-┌──────────────────────┐
-│ Generic ACP Agent    │
-├──────────────────────┤
-│ ACP Protocol Layer   │
-│ Session Management   │
-│ Tool Execution       │
-│ Model Adapter        │
-└──────────┬───────────┘
-           │ OpenAI API
-           ▼
-┌──────────────────────┐
-│ OpenAI Compatible API│
-└──────────┬───────────┘
-           │
-           ├─ OpenAI
-           ├─ Azure OpenAI
-           ├─ OpenRouter
-           ├─ Ollama
-           ├─ LM Studio
-           └─ vLLM
+## Requirements
+
+Node.js 20 or newer.
+
+```bash
+npm install
+npm run build
+npm start
 ```
 
-## Design Goals
+`npm run dev` runs `src/main.ts` without a build. `npm test` typechecks and runs the unit and stdio tests.
 
-### Vendor Neutral
+## Configuration
 
-The agent should have no provider-specific implementation.
+Copy `config.example.json` to `config.json`, or set `GENERIC_ACP_CONFIG` to a JSON file. Environment variables override the file.
 
-Example configuration:
+One host:
 
 ```json
 {
   "baseUrl": "https://openrouter.ai/api/v1",
-  "apiKey": "secret",
-  "model": "anthropic/claude-sonnet-4"
+  "apiKey": "sk-or-v1-replace-me",
+  "model": "inclusionai/ling-3.0-flash-sante:free"
 }
 ```
 
-Changing providers should require only configuration changes.
+The same three values are `GENERIC_ACP_BASE_URL`, `GENERIC_ACP_API_KEY`, and `GENERIC_ACP_MODEL`.
 
-### Minimal Footprint
-
-The agent should implement only:
-
-- ACP protocol
-- OpenAI API communication
-- Session management
-- Tool calling
-
-Avoid:
-
-- planning engines
-- autonomous workflows
-- provider-specific integrations
-- complex orchestration layers
-
-### OpenAI Compatibility First
-
-Support:
-
-- Chat Completions
-- Responses API
-- Streaming
-- Function Calling
-- Structured Output
-
-## ACP Responsibilities
-
-### Initialization
-
-```text
-JetBrains
-    │
-initialize
-    │
-    ▼
-ACP Agent
-```
-
-The agent advertises:
-
-- supported capabilities
-- tool support
-- session capabilities
-- optional modes
-
-### Session Lifecycle
-
-```text
-create session
-load session
-resume session
-close session
-```
-
-### Prompt Processing
-
-```text
-ACP Prompt
-    ↓
-OpenAI Request
-    ↓
-Provider Response
-    ↓
-ACP Response
-```
-
-No additional prompt manipulation should be required.
-
-## Tool Calling
-
-The bridge maps ACP tool requests to OpenAI tool/function calls.
-
-```text
-JetBrains
-    ↓
-ACP Tool Request
-    ↓
-OpenAI Tool Schema
-    ↓
-Model
-    ↓
-Tool Execution
-    ↓
-ACP Result
-```
-
-Potential tools:
-
-- MCP tools
-- IntelliJ MCP tools
-- Filesystem tools
-- Terminal tools
-- Enterprise integrations
-
-## Configuration Examples
-
-### OpenRouter
+Several hosts. The first entry is the default model. Ids are letters, digits, `_`, and `-`. A model id may itself contain a colon; the picker still splits on the first colon.
 
 ```json
 {
-  "baseUrl": "https://openrouter.ai/api/v1",
-  "apiKey": "...",
-  "model": "anthropic/claude-sonnet-4"
+  "endpoints": [
+    {
+      "id": "lmstudio",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "apiKey": "lmstudio",
+      "model": "prism-ml/bonsai-27b"
+    },
+    {
+      "id": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "sk-or-v1-replace-me",
+      "model": "inclusionai/ling-3.0-flash-sante:free"
+    }
+  ]
 }
 ```
 
-### Azure OpenAI
+`GENERIC_ACP_ENDPOINTS` is that array as one JSON string. Headers that belong to one host go on that endpoint. Top-level `headers` apply only to endpoints that do not set their own.
+
+Other fields in the same file:
+
+| Field | Role |
+|---|---|
+| `apiMode` | `chat-completions` (default) or `responses` |
+| `responseSchema` | JSON schema for structured output |
+| `headers` | Extra HTTP headers |
+| `imageSupport` | Advertise and send images (default on) |
+| `audioSupport` | Send `input_audio` for wav and mp3 (default off) |
+| `requestTimeoutMs` | Header and body silence limit, default 30 minutes |
+| `contextTokens` | Context window override |
+| `request` | `instructions`, `temperature`, `topP`, `maxTokens`, `stop`, `seed`, penalties, `toolChoice`, `parallelToolCalls`, `reasoningEffort`, `imageDetail` |
+| `modes` | Named presets. A mode `model` uses the `endpointId:modelId` form when more than one endpoint is configured |
+| `commands` | Slash commands. `/name` is rewritten to the command description |
+| `includeOpenDocuments` | Attach editor text from document notifications (default off) |
+| `sessionDir` | Directory of session JSON files |
+
+Azure OpenAI needs `api-version` on the URL, for example `https://your-resource.openai.azure.com/openai/deployments/your-deployment?api-version=2024-10-21`. The client does not add that query itself.
+
+Per-provider notes and what has been run live are in `PROVIDERS.md`.
+
+## JetBrains
+
+AI Assistant starts the built agent on stdio. The launcher config is `~/.jetbrains/acp.json`. This repository's `config.json` is not read unless you set `GENERIC_ACP_CONFIG`.
 
 ```json
 {
-  "baseUrl": "https://company.openai.azure.com",
-  "apiKey": "...",
-  "model": "gpt-5"
+  "agent_servers": {
+    "Generic ACP": {
+      "command": "node",
+      "args": ["C:\\DEV\\GenericACP\\dist\\main.js"],
+      "env": {
+        "GENERIC_ACP_ENDPOINTS": "[{\"id\":\"lmstudio\",\"baseUrl\":\"http://127.0.0.1:1234/v1\",\"apiKey\":\"lmstudio\",\"model\":\"local-model\"},{\"id\":\"openrouter\",\"baseUrl\":\"https://openrouter.ai/api/v1\",\"apiKey\":\"sk-or-v1-replace-me\",\"model\":\"inclusionai/ling-3.0-flash-sante:free\"}]"
+      }
+    }
+  }
 }
 ```
 
-### Ollama
+Restart the agent after changing that file or rebuilding `dist/main.js`.
 
-```json
-{
-  "baseUrl": "http://localhost:11434/v1",
-  "apiKey": "unused",
-  "model": "qwen3-coder"
-}
-```
-
-### LM Studio
-
-```json
-{
-  "baseUrl": "http://localhost:1234/v1",
-  "apiKey": "unused",
-  "model": "local-model"
-}
-```
-
-## Proposed Internal Modules
+## Layout
 
 ```text
 src/
+├── main.ts                 stdio entry
 ├── acp/
-│   ├── server.ts
-│   ├── session.ts
-│   └── protocol.ts
-│
+│   ├── agent.ts            ACP Agent implementation
+│   ├── session.ts          in-memory sessions and optional JSON files
+│   ├── content.ts          ACP content blocks ↔ OpenAI message content
+│   ├── controls.ts         modes, config options, slash commands
+│   └── documents.ts        open editor buffers
 ├── openai/
-│   ├── provider.ts
-│   ├── streaming.ts
-│   └── tools.ts
-│
-├── config/
-│   └── config.ts
-│
-├── mcp/
-│   └── bridge.ts
-│
-└── main.ts
+│   ├── provider.ts         one OpenAI client
+│   ├── streaming.ts        Chat Completions stream
+│   ├── responses.ts        Responses API stream
+│   ├── tools.ts            built-in tools
+│   ├── sampling.ts         standard request fields
+│   ├── model-info.ts       model list and context window
+│   ├── context.ts          shrink a prompt that does not fit
+│   └── http.ts             long fetch timeouts
+├── mcp/                    MCP clients (stdio, HTTP, SSE, ACP)
+└── config/                 config.json and env loading
 ```
 
-## Development Inspiration
+## Out of scope
 
-Potential source projects worth studying:
-
-### OpenCode
-
-Useful for:
-
-- provider abstraction
-- agent structure
-- session management
-
-Repository:
-
-```text
-https://github.com/sst/opencode
-```
-
-### Gemini CLI
-
-Useful for:
-
-- ACP implementation
-- protocol examples
-
-Repository:
-
-```text
-https://github.com/google-gemini/gemini-cli
-```
-
-### Codex CLI
-
-Useful for:
-
-- OpenAI-based architecture
-- coding workflows
-
-Repository:
-
-```text
-https://github.com/openai/codex
-```
-
-### mcpc / acp-ai-provider
-
-Useful for:
-
-- ACP abstractions
-- ACP ↔ AI SDK bridging
-
-Repository:
-
-```text
-https://github.com/mcpc-tech/mcpc
-```
-
-## Optional Future Capabilities
-
-### MCP Support
-
-Expose MCP servers provided by JetBrains.
-
-### Cost Tracking
-
-Track:
-
-- requests
-- token usage
-- estimated costs
-
-### Model Profiles
-
-```json
-{
-  "coding": "gpt-5",
-  "review": "claude-sonnet-4",
-  "fast": "gpt-5-mini"
-}
-```
-
-### Provider Fallbacks
-
-```json
-{
-  "primary": "openrouter",
-  "secondary": "azure-openai"
-}
-```
-
-## Candidate Project Names
-
-```text
-acp-openai-agent
-```
-
-```text
-generic-acp-agent
-```
-
-```text
-openai-acp-bridge
-```
-
-```text
-universal-acp-agent
-```
-
-```text
-acp-model-adapter
-```
-
-## Expected Benefits
-
-- No vendor lock-in
-- One ACP agent for all OpenAI-compatible providers
-- Cloud and local model support
-- Simpler enterprise deployments
-- Consistent configuration
-- Reusable ACP layer
-
-## Vision
-
-The project should become for ACP what JDBC became for databases:
-
-> A thin, provider-agnostic integration layer allowing any ACP-capable client to communicate with any OpenAI-compatible model provider through a common interface.
+Next-edit suggestions, elicitation, a planning engine, and automatic failover from one host to another. Choosing another endpoint is a model-list selection, not a retry.

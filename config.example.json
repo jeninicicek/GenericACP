@@ -1,19 +1,30 @@
 {
-  "baseUrl": "https://opencode.ai/zen/v1",
-  "apiKey": "sk-52ZCybg",
-  "model": "big-pickle",
-  "apiMode": "chat-completions",
-  "imageSupport": true,
-  "responseSchema": {
-    "type": "object",
-    "properties": {
-      "answer": { "type": "string" }
+  "endpoints": [
+    {
+      "id": "lmstudio",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "apiKey": "lmstudio",
+      "model": "prism-ml/bonsai-27b"
     },
-    "required": ["answer"]
-  },
-  "headers": {
-    "x-opencode-session": "public",
-    "x-opencode-client": "opencode",
-    "User-Agent": "opencode/1.0.0"
-  }
+    {
+      "id": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "sk-or-v1-replace-me",
+      "model": "inclusionai/ling-3.0-flash-sante:free"
+    }
+  ],
+  "imageSupport": true,
+  "requestTimeoutMs": 1800000,
+  "modes": [
+    {
+      "id": "vision",
+      "name": "Vision",
+      "model": "openrouter:dots-studio/dots-3-note-preview:free"
+    },
+    {
+      "id": "structured",
+      "name": "Structured",
+      "model": "openrouter:liquid/lfm-2.5-2.6b:free"
+    }
+  ]
 }
