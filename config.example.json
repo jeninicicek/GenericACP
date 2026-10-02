@@ -1,0 +1,19 @@
+{
+  "baseUrl": "https://opencode.ai/zen/v1",
+  "apiKey": "sk-52ZCybg",
+  "model": "big-pickle",
+  "apiMode": "chat-completions",
+  "imageSupport": true,
+  "responseSchema": {
+    "type": "object",
+    "properties": {
+      "answer": { "type": "string" }
+    },
+    "required": ["answer"]
+  },
+  "headers": {
+    "x-opencode-session": "public",
+    "x-opencode-client": "opencode",
+    "User-Agent": "opencode/1.0.0"
+  }
+}
